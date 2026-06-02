@@ -54,3 +54,9 @@ features_df = pd.DataFrame(features)[["id","valence","energy","danceability",
 df = track_df.merge(features_df, on="id")
 df.to_parquet("data/tracks.parquet", index=False)
 print(f"Dataset: {len(df)} tracks")
+
+if __name__ == "__main__":
+    import os
+    from dotenv import load_dotenv
+    load_dotenv()
+    
