@@ -1,0 +1,15 @@
+spotipy
+pandas
+numpy
+scikit-learn
+networkx
+stable-baselines3[extra]
+gymnasium
+fastapi
+uvicorn
+sqlalchemy
+psycopg2-binary
+redis
+python-dotenv
+matplotlib
+seaborn
