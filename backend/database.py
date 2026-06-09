@@ -53,7 +53,7 @@ def load_tracks_from_parquet(parquet_path: str = 'data/tracks.parquet'):
                    'preview_url', 'album_image']
     df = df[[c for c in schema_cols if c in df.columns]]
 
-    df.to_sql('tracks', engine, if_exists='replace',
+    df.to_sql('tracks', engine, if_exists='append',
               index=False, method='multi', chunksize=500)
     print(f'Loaded {len(df)} tracks into NeonDB')
 
