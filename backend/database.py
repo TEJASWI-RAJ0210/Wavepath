@@ -5,19 +5,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DATABASE_URL = os.getenv('DATABASE_URL',
-    'postgresql://user:pass@localhost:5432/wavepath')
+DATABASE_URL = os.getenv('DATABASE_URL')
 
-# SQLAlchemy engine — this is the connection to PostgreSQL.
-# We reuse this engine across the whole app (connection pooling).
-engine = create_engine(DATABASE_URL)
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={'sslmode': 'require'}
+)
 
 
 def init_db():
-    """
-    Create all tables if they do not exist yet.
-    Running this twice is safe — CREATE TABLE IF NOT EXISTS.
-    """
     with engine.connect() as conn:
         conn.execute(text('''
             CREATE TABLE IF NOT EXISTS tracks (
@@ -29,9 +25,6 @@ def init_db():
                 danceability     FLOAT,
                 tempo            FLOAT,
                 acousticness     FLOAT,
-                instrumentalness FLOAT,
-                loudness         FLOAT,
-                popularity       INT,
                 preview_url      TEXT,
                 album_image      TEXT
             )
@@ -48,28 +41,21 @@ def init_db():
             )
         '''))
         conn.commit()
-    print('Tables created (or already exist)')
+    print('NeonDB tables ready')
 
 
 def load_tracks_from_parquet(parquet_path: str = 'data/tracks.parquet'):
-    """
-    Load the track dataset into the tracks table.
-    Uses INSERT ... ON CONFLICT DO NOTHING so re-running is safe.
-    """
     df = pd.read_parquet(parquet_path)
-    # Rename columns to match DB schema
-    df = df.where(pd.notna(df), None)  # replace NaN with None
+    df = df.where(pd.notna(df), None)
 
-    # Bulk insert via pandas — fastest way to load large DataFrames
-    df.to_sql(
-        'tracks',
-        engine,
-        if_exists='append',  # append, don't overwrite
-        index=False,
-        method='multi',      # batch inserts
-        chunksize=1000,
-    )
-    print(f'Loaded {len(df)} tracks into PostgreSQL')
+    schema_cols = ['id', 'name', 'artist', 'valence', 'energy',
+                   'danceability', 'tempo', 'acousticness',
+                   'preview_url', 'album_image']
+    df = df[[c for c in schema_cols if c in df.columns]]
+
+    df.to_sql('tracks', engine, if_exists='replace',
+              index=False, method='multi', chunksize=500)
+    print(f'Loaded {len(df)} tracks into NeonDB')
 
 
 if __name__ == '__main__':

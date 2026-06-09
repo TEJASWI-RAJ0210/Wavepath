@@ -1,139 +1,145 @@
-import os, time
+import os
 import pandas as pd
-import spotipy
-from spotipy.oauth2 import SpotifyClientCredentials
-from dotenv import load_dotenv
-
-# Load the credentials we saved in .env
-load_dotenv()
-
-# Authenticate with Spotify using Client Credentials flow.
-# This flow is for server-to-server access — no user login needed.
-# It gives us read-only access to the public catalog.
-sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
-    client_id=os.getenv('SPOTIFY_CLIENT_ID'),
-    client_secret=os.getenv('SPOTIFY_CLIENT_SECRET')
-))
+import numpy as np
 
 # ─────────────────────────────────────────────────────────────
-# SEED PLAYLISTS
-# We need tracks spread across all four quadrants of the mood
-# space (valence x energy). Picking playlists with different
-# emotional tones guarantees good coverage.
+# This dataset (maharshipandya Spotify Tracks) has these columns:
+# track_id, artists, album_name, track_name, popularity,
+# duration_ms, explicit, danceability, energy, key, loudness,
+# mode, speechiness, acousticness, instrumentalness, liveness,
+# valence, tempo, time_signature, track_genre
 # ─────────────────────────────────────────────────────────────
-SEED_PLAYLISTS = [
-    # Bollywood — High energy, high valence
-    "37i9dQZF1DX0XUfTFmNBRM",  # Bollywood Butter
-    "37i9dQZF1DXdgz8ZB7c2CP",  # Bollywood Workout
-    "37i9dQZF1DX3PIPIT6lEg5",  # Hot Hits Hindi
 
-    # Bollywood — Sad / emotional
-    "37i9dQZF1DX3YSRoSdA634",  # Sad Songs Hindi
-    "37i9dQZF1DWVqfgj8NZEp1",  # Bollywood Heartbreak
-    "37i9dQZF1DX6mvEU1S6INL",  # Dil Se
-
-    # Bollywood — Romantic / calm
-    "37i9dQZF1DWUa8ZRTfalHk",  # Romance Hindi
-    "37i9dQZF1DX0vHZ8ElGm5Y",  # Bollywood Love Songs
-    "37i9dQZF1DXdSjVZSHcFNd",  # Filhaal
-
-    # Party / Dance
-    "37i9dQZF1DX1IkKyqeQGJ8",  # Bollywood Party
-    "37i9dQZF1DXaB5YNbFEtaW",  # Punjabi Party
-    "37i9dQZF1DX0pH2SQMRXnC",  # Bhangra Hits
-
-    # Indie / Lo-fi Hindi
-    "37i9dQZF1DX4UkKv329LNI",  # Hindi Indie
-    "37i9dQZF1DWXRqgorJj26U",  # Chill Hindi
-
-    # South Indian (Tamil, Telugu) — good for coverage
-    "37i9dQZF1DX6XE7HRLM75P",  # Tamil Hits
-    "37i9dQZF1DX4h89JZTS4Vi",  # Telugu Chartbusters
+# Indian music genres present in this dataset.
+# We filter to only these so the mood space is built
+# entirely from Indian music — not pop or rock.
+INDIAN_GENRES = [
+    'indian', 'hindi', 'bollywood', 'desi',
+    'tamil', 'telugu', 'punjabi', 'south-indian',
+    'malayalam', 'kannada', 'bhojpuri', 'gujarati',
+    'marathi', 'rajasthani', 'haryanvi'
 ]
 
 
-def fetch_playlist_tracks(playlist_id: str) -> list:
+def load_and_filter(csv_path: str) -> pd.DataFrame:
     """
-    Fetch all track metadata from a Spotify playlist.
-    Spotify paginates results (max 100 per page), so we loop
-    through pages until there are no more.
+    Load the Kaggle Spotify Tracks CSV and filter to Indian genres only.
     """
-    results = sp.playlist_tracks(playlist_id)
-    tracks = []
-    while results:
-        for item in results['items']:
-            track = item.get('track')
-            # Skip local files, podcasts, deleted tracks
-            if not track or not track.get('id'):
-                continue
-            tracks.append({
-                'id':          track['id'],
-                'name':        track['name'],
-                'artist':      track['artists'][0]['name'],
-                'preview_url': track.get('preview_url'),
-                'album_image': (
-                    track['album']['images'][0]['url']
-                    if track['album']['images'] else None
-                ),
-                'popularity':  track.get('popularity', 0),
-            })
-        # Follow Spotify's pagination cursor
-        results = sp.next(results) if results['next'] else None
-    return tracks
+    print(f'Loading {csv_path}...')
+    df = pd.read_csv(csv_path)
+    print(f'Total rows in CSV: {len(df)}')
+    print(f'Columns: {list(df.columns)}')
+    print()
+
+    # ── Rename columns to match our app's schema ──────────────
+    # The CSV uses different names than what our app expects
+    df = df.rename(columns={
+        'track_id':   'id',
+        'track_name': 'name',
+        'artists':    'artist',
+    })
+
+    # ── Filter to Indian genres ───────────────────────────────
+    # track_genre column has values like 'indian', 'tamil', etc.
+    # We keep a row if its genre matches any Indian genre keyword.
+    mask = df['track_genre'].str.lower().str.contains(
+        '|'.join(INDIAN_GENRES), na=False
+    )
+    indian_df = df[mask].copy()
+    print(f'Indian genre tracks found: {len(indian_df)}')
+
+    # ── If no Indian tracks found, warn and use full dataset ──
+    # Some versions of this CSV may have slightly different genre names.
+    # In that case we print all unique genres so you can check manually.
+    if len(indian_df) < 100:
+        print()
+        print('WARNING: Very few Indian tracks found.')
+        print('All genres in the dataset:')
+        print(sorted(df['track_genre'].unique()))
+        print()
+        print('Using full dataset as fallback...')
+        indian_df = df.copy()
+
+    return indian_df
 
 
-def fetch_audio_features(track_ids: list) -> list:
+def clean_dataset(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Fetch Spotify audio features for a batch of track IDs.
-    The API allows max 100 IDs per call, so we chunk the list.
-    We add a small sleep to stay under the rate limit (100 req/min).
+    Clean and validate the dataset.
+    After this function, the DataFrame is guaranteed to have:
+    - id, name, artist, valence, energy columns
+    - All values in 0-1 range
+    - No duplicates
+    - No missing valence or energy
     """
-    features = []
-    for i in range(0, len(track_ids), 100):
-        batch = track_ids[i:i+100]
-        result = sp.audio_features(batch)
-        # Some tracks return None (unavailable in region)
-        features.extend([f for f in result if f])
-        time.sleep(0.5)  # be polite to the API
-        print(f'  Fetched features {i+len(batch)}/{len(track_ids)}')
-    return features
+
+    # ── Add columns our app needs but dataset doesn't have ────
+    # This dataset was scraped before Spotify removed preview URLs.
+    # We set these to None — the frontend handles missing previews.
+    if 'preview_url' not in df.columns:
+        df['preview_url'] = None
+    if 'album_image' not in df.columns:
+        df['album_image'] = None
+
+    # ── Drop rows with missing required values ─────────────────
+    required = ['id', 'name', 'artist', 'valence', 'energy']
+    before   = len(df)
+    df = df.dropna(subset=required)
+    print(f'Dropped {before - len(df)} rows with missing required values')
+
+    # ── Normalise to 0-1 if any column is on 0-100 scale ──────
+    # This dataset uses 0-1 scale already, but we check anyway
+    # in case you switch to a different dataset later
+    for col in ['valence', 'energy', 'danceability', 'acousticness']:
+        if col in df.columns and df[col].max() > 1.0:
+            df[col] = df[col] / 100.0
+            print(f'Normalised {col} from 0-100 to 0-1 scale')
+
+    # ── Clip to valid range just in case ──────────────────────
+    for col in ['valence', 'energy', 'danceability', 'acousticness']:
+        if col in df.columns:
+            df[col] = df[col].clip(0.0, 1.0)
+
+    # ── Deduplicate ───────────────────────────────────────────
+    before = len(df)
+    df = df.drop_duplicates(subset='id')
+    print(f'Removed {before - len(df)} duplicate tracks')
+
+    # ── Keep only the columns our app uses ────────────────────
+    keep = ['id', 'name', 'artist', 'valence', 'energy',
+            'danceability', 'tempo', 'acousticness',
+            'instrumentalness', 'preview_url', 'album_image']
+    df = df[[c for c in keep if c in df.columns]]
+
+    print(f'Final clean dataset: {len(df)} tracks')
+    return df
 
 
-def build_dataset() -> pd.DataFrame:
-    """
-    Main pipeline: fetch tracks from all playlists, get audio
-    features, merge, deduplicate, and return a clean DataFrame.
-    """
-    print('Step 1: Fetching tracks from seed playlists...')
-    all_tracks = []
-    for i, pid in enumerate(SEED_PLAYLISTS):
-        try:
-            tracks = fetch_playlist_tracks(pid)
-            all_tracks.extend(tracks)
-            print(f'  Playlist {i+1}/{len(SEED_PLAYLISTS)}: {len(tracks)} tracks')
-            time.sleep(0.3)
-        except Exception as e:
-            print(f'  Skipped playlist {pid}: {e}')
+def build_dataset(csv_path: str) -> pd.DataFrame:
+    """Main pipeline: load → filter → clean → return."""
+    print('=== Step 1: Load and filter to Indian music ===')
+    df = load_and_filter(csv_path)
 
-    track_df = pd.DataFrame(all_tracks).drop_duplicates(subset='id')
-    print(f'Total unique tracks: {len(track_df)}')
+    print()
+    print('=== Step 2: Clean and validate ===')
+    df = clean_dataset(df)
 
-    print('Step 2: Fetching audio features...')
-    features = fetch_audio_features(track_df['id'].tolist())
-    features_df = pd.DataFrame(features)[
-        ['id', 'valence', 'energy', 'danceability',
-         'tempo', 'acousticness', 'instrumentalness', 'loudness']
-    ]
+    print()
+    print('=== Step 3: Final summary ===')
+    print(f'Tracks: {len(df)}')
+    print(f'Valence range: {df.valence.min():.3f} to {df.valence.max():.3f}')
+    print(f'Energy range:  {df.energy.min():.3f} to {df.energy.max():.3f}')
+    print()
+    print('Sample tracks:')
+    print(df[['name', 'artist', 'valence', 'energy']].head(10).to_string())
 
-    # Inner join — only keep tracks that have both metadata AND features
-    df = track_df.merge(features_df, on='id', how='inner')
-    print(f'Final dataset: {len(df)} tracks')
     return df
 
 
 if __name__ == '__main__':
     os.makedirs('data', exist_ok=True)
-    df = build_dataset()
+
+    df = build_dataset('data/tracks.csv')
     df.to_parquet('data/tracks.parquet', index=False)
+    print()
     print('Saved to data/tracks.parquet')
-    print(df[['name', 'artist', 'valence', 'energy']].head(10).to_string())
