@@ -1,122 +1,81 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { useState } from "react";
+import MoodCanvas from "./components/MoodCanvas";
+import MoodArcChart from "./components/MoodArcChart";
+import PlaylistCard from "./components/PlaylistCard";
 
-function App() {
-  const [count, setCount] = useState(0)
+const API = "http://localhost:8000";
+
+export default function App() {
+  const [startMood,  setStartMood]  = useState(null);
+  const [targetMood, setTargetMood] = useState(null);
+  const [journey,    setJourney]    = useState(null);
+  const [loading,    setLoading]    = useState(false);
+  const [sessionId,  setSessionId]  = useState(null);
+
+  const buildJourney = async () => {
+    if (!startMood || !targetMood) return;
+    setLoading(true);
+    const res = await fetch(`${API}/journey`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        start_valence:  startMood.valence,
+        start_energy:   startMood.energy,
+        target_valence: targetMood.valence,
+        target_energy:  targetMood.energy,
+        n_songs: 8
+      })
+    });
+    const data = await res.json();
+    setJourney(data);
+    setSessionId(data.session_id);
+    setLoading(false);
+  };
+
+  const sendFeedback = async (trackId, action, position) => {
+    await fetch(`${API}/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId, track_id: trackId, action, position })
+    });
+  };
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+    <div className="min-h-screen bg-gray-50 p-6 max-w-4xl mx-auto">
+      <h1 className="text-2xl font-semibold mb-1">Mood Journey Planner</h1>
+      <p className="text-gray-500 mb-8">Set your current mood and your target. We'll build the arc.</p>
 
-      <div className="ticks"></div>
+      <div className="grid grid-cols-2 gap-6 mb-6">
+        <MoodCanvas value={startMood}  onChange={setStartMood}  label="Where you are now" color="#a855f7" />
+        <MoodCanvas value={targetMood} onChange={setTargetMood} label="Where you want to be" color="#f97316" />
+      </div>
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
+      <button onClick={buildJourney} disabled={!startMood || !targetMood || loading}
+        className="w-full py-3 rounded-xl bg-purple-600 text-white font-medium disabled:opacity-40 mb-8">
+        {loading ? "Building your journey..." : "Build my journey →"}
+      </button>
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+      {journey && (
+        <>
+          <h2 className="font-medium mb-3">Your mood arc</h2>
+          <MoodArcChart
+            moodArc={journey.mood_arc}
+            targetValence={targetMood.valence}
+            targetEnergy={targetMood.energy}
+          />
+          <h2 className="font-medium mt-6 mb-3">Your playlist ({journey.playlist.length} songs)</h2>
+          <div className="flex flex-col gap-2">
+            {journey.playlist.map((track, i) => (
+              <PlaylistCard
+                key={track.id}
+                track={track}
+                isActive={false}
+                onFeedback={(action) => sendFeedback(track.id, action, i)}
+              />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
-
-export default App
